@@ -381,6 +381,9 @@ class UpdateMethods:
         self._dispatching_updates_queue.clear()
 
     async def _dispatch_update(self: 'TelegramClient', update, others, channel_id, pts_date):
+        if isinstance(update, types.UpdateNewChannelMessage):
+            await self._get_channel_difference(update, channel_id, update.pts)
+
         if not self._entity_cache.ensure_cached(update):
             # We could add a lock to not fetch the same pts twice if we are
             # already fetching it. However this does not happen in practice,
@@ -508,6 +511,31 @@ class UpdateMethods:
                     name = getattr(callback, '__name__', repr(callback))
                     self._log[__name__].exception('Unhandled exception on %s',
                                                   name)
+
+    async def _get_channel_difference(self: 'TelegramClient', update, channel_id, pts):
+        """
+        Get the difference for this `channel_id` if any, then handle update.
+        """
+        if channel_id:
+            d = await self(functions.updates.GetChannelDifferenceRequest(
+                channel = channel_id,
+                filter = types.ChannelMessagesFilterEmpty(),
+                pts = pts,
+                limit = 200,
+                force = True
+            ))
+
+            if isinstance(d, (types.updates.ChannelDifference)):
+                self._handle_update(types.Updates(
+                    users = d.users,
+                    chats = d.chats,
+                    date = time.time(),
+                    seq = None,
+                    updates = d.other_updates + [
+                        types.UpdateNewMessage(m, 0, 0)
+                        for m in d.new_messages
+                    ]
+                ))
 
     async def _get_difference(self: 'TelegramClient', update, channel_id, pts_date):
         """
